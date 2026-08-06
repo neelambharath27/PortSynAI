@@ -1,0 +1,46 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: portsynai-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: portsynai
+      POSTGRES_PASSWORD: portsynai_dev_pw
+      POSTGRES_DB: portsynai_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - portsynai_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U portsynai -d portsynai_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  server:
+    build: ./server
+    container_name: portsynai-server
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+psycopg2://portsynai:portsynai_dev_pw@postgres:5432/portsynai_db
+      JWT_SECRET_KEY: CHANGE_ME_IN_PRODUCTION_super_secret_key_2026
+      CORS_ORIGINS: '["http://localhost:5173","http://localhost:4173"]'
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  client:
+    build: ./client
+    container_name: portsynai-client
+    restart: unless-stopped
+    environment:
+      VITE_API_BASE_URL: http://localhost:8000/api/v1
+    ports:
+      - "5173:5173"
+    depends_on:
+      - server
+
+volumes:
+  portsynai_pgdata:

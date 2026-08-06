@@ -1,0 +1,128 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply bg-navy-950 text-ink-300 font-body antialiased;
+  }
+
+  ::selection {
+    @apply bg-cyan-500/30 text-white;
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    @apply bg-navy-900;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply bg-navy-600 rounded-full;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-navy-500;
+  }
+
+  :focus-visible {
+    outline: 2px solid #22d3ee;
+    outline-offset: 2px;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-display;
+  }
+}
+
+@layer components {
+  .glass-panel {
+    @apply bg-navy-800/60 backdrop-blur-xl border border-white/[0.06] shadow-glass;
+  }
+
+  .light .glass-panel {
+    @apply bg-white/80 border-ink-900/[0.06] shadow-none;
+  }
+
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg bg-cyan-500 px-5 py-2.5 text-sm font-semibold text-navy-950 transition-all hover:bg-cyan-400 hover:shadow-glow-cyan active:scale-[0.98];
+  }
+
+  .btn-secondary {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg border border-white/15 bg-white/5 px-5 py-2.5 text-sm font-semibold text-white transition-all hover:bg-white/10 active:scale-[0.98];
+  }
+
+  .light .btn-secondary {
+    @apply border-ink-900/10 bg-ink-900/[0.03] text-ink-900 hover:bg-ink-900/[0.06];
+  }
+
+  .status-pill {
+    @apply inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 font-mono text-[11px] font-medium uppercase tracking-wide;
+  }
+
+  .nav-link {
+    @apply flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-ink-300/80 transition-colors hover:bg-white/5 hover:text-white;
+  }
+
+  .nav-link-active {
+    @apply bg-cyan-500/10 text-cyan-400;
+  }
+}
+
+@keyframes portsynai-pulse {
+  0%, 100% { opacity: 0.9; transform: scale(0.85); }
+  50% { opacity: 0; transform: scale(1.6); }
+}
+
+/* Leaflet theming to match the enterprise dark console */
+.leaflet-container {
+  background: #0a1628;
+  font-family: 'Inter', sans-serif;
+}
+
+.light .leaflet-container {
+  background: #e2e8f0;
+}
+
+.leaflet-marker-icon.portsynai-container-marker {
+  transition: transform 2.8s linear;
+  background: transparent;
+  border: none;
+}
+
+.leaflet-popup-content-wrapper {
+  background: rgba(16, 31, 53, 0.95);
+  color: #cbd5e1;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  box-shadow: 0 8px 32px rgba(5, 11, 24, 0.5);
+  backdrop-filter: blur(12px);
+}
+
+.leaflet-popup-tip {
+  background: rgba(16, 31, 53, 0.95);
+}
+
+.leaflet-popup-content {
+  margin: 12px 14px;
+  font-size: 12px;
+}
+
+.leaflet-control-zoom a {
+  background: rgba(16, 31, 53, 0.9) !important;
+  color: #22d3ee !important;
+  border-color: rgba(255, 255, 255, 0.08) !important;
+}
+
+.leaflet-control-attribution {
+  background: rgba(10, 22, 40, 0.7) !important;
+  color: #64748b !important;
+}
+
+.leaflet-control-attribution a {
+  color: #22d3ee !important;
+}
