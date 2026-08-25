@@ -1,51 +1,49 @@
-"""XGBoost composite risk scoring engine.
+"""XGBoost-based composite risk scoring service.
 
-No trained model or labeled incident dataset is available in this
-environment, so `_MockXGBoostModel.predict` combines the six input signals
-with fixed weights (standing in for learned `feature_importances_`) instead
-of running a real boosted-tree inference pass. The public surface
-(`XGBoostRiskService.score`) returns the same shape a real model would
-(final score + per-feature contributions), so replacing the mock with
-`xgboost.Booster.predict()` + a SHAP `TreeExplainer` later is a change
-contained entirely to this file.
+The model is an actual XGBClassifier trained on a reproducible synthetic
+training dataset because the project currently has no labeled real-world
+customs incident dataset.
 
-The "model" is loaded/cached once per process, per the performance
-requirement to cache the XGBoost model rather than reconstruct it per call.
+The trained model is cached in memory and used for risk prediction.
 """
 
 from __future__ import annotations
 
-import random
-import time
+import threading
 from dataclasses import dataclass, field
+
+import numpy as np
+import pandas as pd
+from xgboost import XGBClassifier
 
 from app.models.enums import RiskLevel
 
-# Feature weight = its contribution to the 0-100 final score at a raw input
-# of 100. Stands in for a trained model's feature_importances_. Signals sum
-# to noticeably more than 1.0 combined because in practice a container
-# rarely trips more than 2-3 of these at once — this keeps single-signal
-# incidents (e.g. just a temperature spike) from being under-weighted while
-# still capping the final blended score at 100.
-FEATURE_WEIGHTS: dict[str, float] = {
-    "gps_score": 0.22,
-    "rfid_score": 0.12,
-    "sensor_score": 0.20,
-    "manifest_score": 0.20,
-    "yolo_score": 0.34,
-    "delay_score": 0.10,
-}
+
+FEATURES: list[str] = [
+    "gps_score",
+    "rfid_score",
+    "sensor_score",
+    "manifest_score",
+    "yolo_score",
+    "delay_score",
+]
 
 FEATURE_LABELS: dict[str, str] = {
     "gps_score": "GPS Deviation",
     "rfid_score": "RFID Failure",
-    "sensor_score": "Sensor Anomaly (Temp / Humidity / Battery / Door)",
+    "sensor_score": "Sensor Anomaly",
     "manifest_score": "Manifest Mismatch",
     "yolo_score": "YOLO Detection",
     "delay_score": "Delay / ETA Risk",
 }
 
-TRIGGER_THRESHOLD = 25.0  # a factor is called out as "triggered" above this
+TRIGGER_THRESHOLD = 25.0
+
+_RANDOM_SEED = 42
+_TRAIN_SAMPLES = 5000
+
+_model: XGBClassifier | None = None
+_lock = threading.Lock()
 
 
 @dataclass
@@ -67,58 +65,87 @@ class RiskPrediction:
     factors: list[dict] = field(default_factory=list)
 
 
-class _MockXGBoostModel:
-    def __init__(self) -> None:
-        self.loaded_at = time.monotonic()
-        self.weights = FEATURE_WEIGHTS
+def _synthetic_training_data(
+    n: int = _TRAIN_SAMPLES,
+) -> tuple[pd.DataFrame, np.ndarray]:
+    """Create a reproducible synthetic training dataset.
 
-    def predict(self, inputs: RiskInputs) -> RiskPrediction:
-        raw = {
-            "gps_score": inputs.gps_score,
-            "rfid_score": inputs.rfid_score,
-            "sensor_score": inputs.sensor_score,
-            "manifest_score": inputs.manifest_score,
-            "yolo_score": inputs.yolo_score,
-            "delay_score": inputs.delay_score,
-        }
+    Each feature is represented on a 0-100 risk scale.
 
-        contributions = {k: raw[k] * self.weights[k] for k in raw}
-        final_score = round(min(100.0, sum(contributions.values())), 1)
+    This is NOT a real customs dataset. It is used only because the project
+    currently does not contain labeled real-world incident outcomes.
+    """
 
-        factors = sorted(
-            (
-                {
-                    "factor": key,
-                    "label": FEATURE_LABELS[key],
-                    "contribution": round(value, 1),
-                    "triggered": raw[key] >= TRIGGER_THRESHOLD,
-                    "description": _describe(key, raw[key]),
-                }
-                for key, value in contributions.items()
-            ),
-            key=lambda f: f["contribution"],
-            reverse=True,
+    rng = np.random.default_rng(_RANDOM_SEED)
+
+    data = {
+        feature: rng.uniform(0, 100, n)
+        for feature in FEATURES
+    }
+
+    df = pd.DataFrame(data)
+
+    # Training relationship used to create synthetic labels.
+    # Higher values indicate higher operational/security risk.
+    weights = {
+        "gps_score": 0.22,
+        "rfid_score": 0.12,
+        "sensor_score": 0.20,
+        "manifest_score": 0.20,
+        "yolo_score": 0.34,
+        "delay_score": 0.10,
+    }
+
+    weighted_score = sum(
+        df[feature] * weight
+        for feature, weight in weights.items()
+    )
+
+    noise = rng.normal(0, 7, n)
+
+    synthetic_score = weighted_score + noise
+
+    threshold = np.percentile(synthetic_score, 65)
+
+    labels = (synthetic_score >= threshold).astype(int)
+
+    return df, labels
+
+
+def _get_model() -> XGBClassifier:
+    """Create and cache the actual XGBoost classifier."""
+
+    global _model
+
+    if _model is not None:
+        return _model
+
+    with _lock:
+        if _model is not None:
+            return _model
+
+        X, y = _synthetic_training_data()
+
+        model = XGBClassifier(
+            n_estimators=150,
+            max_depth=4,
+            learning_rate=0.08,
+            subsample=0.9,
+            colsample_bytree=0.9,
+            objective="binary:logistic",
+            eval_metric="logloss",
+            random_state=_RANDOM_SEED,
+            n_jobs=1,
         )
 
-        risk_level = _risk_level(final_score)
-        # A real model's confidence would come from predicted-probability
-        # margin; here it's a function of how many signals agree (more
-        # agreement among high-contributing factors -> higher confidence).
-        triggered = sum(1 for f in factors if f["triggered"])
-        confidence = round(min(0.98, 0.78 + 0.05 * triggered + random.uniform(-0.03, 0.03)), 2)
+        model.fit(X, y)
 
-        return RiskPrediction(
-            final_score=final_score,
-            risk_level=risk_level,
-            confidence=confidence,
-            recommendation=_recommend(risk_level, factors),
-            factors=factors,
-        )
+        _model = model
+
+        return _model
 
 
 def _risk_level(score: float) -> RiskLevel:
-    if score >= 81:
-        return RiskLevel.CRITICAL
     if score >= 61:
         return RiskLevel.HIGH
     if score >= 31:
@@ -129,39 +156,140 @@ def _risk_level(score: float) -> RiskLevel:
 def _describe(key: str, value: float) -> str:
     if value < TRIGGER_THRESHOLD:
         return "Within normal range"
+
     descriptions = {
-        "gps_score": "GPS track deviates from the expected route or signal is invalid",
-        "rfid_score": "RFID tag scan failed or returned an unexpected read",
-        "sensor_score": "Sensor telemetry (temperature/humidity/battery/door) is out of range",
-        "manifest_score": "Declared manifest doesn't match observed cargo weight or contents",
-        "yolo_score": "X-ray screening flagged a restricted or high-threat object",
-        "delay_score": "Container is significantly behind its predicted schedule",
+        "gps_score": (
+            "GPS track deviates from the expected route "
+            "or signal is invalid"
+        ),
+        "rfid_score": (
+            "RFID tag scan failed or returned an unexpected read"
+        ),
+        "sensor_score": (
+            "Sensor telemetry is outside the expected range"
+        ),
+        "manifest_score": (
+            "Declared manifest does not match observed cargo information"
+        ),
+        "yolo_score": (
+            "X-ray screening flagged a restricted or high-threat object"
+        ),
+        "delay_score": (
+            "Container is significantly behind its predicted schedule"
+        ),
     }
+
     return descriptions[key]
 
+def _recommend(
+    risk_level: RiskLevel,
+    factors: list[dict],
+) -> str:
 
-def _recommend(risk_level: RiskLevel, factors: list[dict]) -> str:
     top = factors[0] if factors else None
-    if risk_level == RiskLevel.CRITICAL:
+
+    if risk_level == RiskLevel.HIGH:
+
         if top and top["factor"] == "yolo_score":
             return "Security Team Required"
-        return "Immediate Customs Review"
-    if risk_level == RiskLevel.HIGH:
+
         return "Secondary Inspection Required"
+
     if risk_level == RiskLevel.MEDIUM:
         return "Open Container"
+
     return "Proceed Normally"
 
 
+
 class XGBoostRiskService:
-    _model: _MockXGBoostModel | None = None
+    """Actual XGBoost inference service."""
 
     @classmethod
-    def get_model(cls) -> _MockXGBoostModel:
-        if cls._model is None:
-            cls._model = _MockXGBoostModel()
-        return cls._model
+    def get_model(cls) -> XGBClassifier:
+        return _get_model()
 
     @classmethod
     def score(cls, inputs: RiskInputs) -> RiskPrediction:
-        return cls.get_model().predict(inputs)
+        model = cls.get_model()
+
+        raw = {
+            "gps_score": float(inputs.gps_score),
+            "rfid_score": float(inputs.rfid_score),
+            "sensor_score": float(inputs.sensor_score),
+            "manifest_score": float(inputs.manifest_score),
+            "yolo_score": float(inputs.yolo_score),
+            "delay_score": float(inputs.delay_score),
+        }
+
+        row = pd.DataFrame(
+            [[raw[feature] for feature in FEATURES]],
+            columns=FEATURES,
+        )
+
+        probability = float(
+            model.predict_proba(row)[0][1]
+        )
+
+        # Convert model probability to the application's 0-100 risk score.
+        final_score = round(
+            max(0.0, min(100.0, probability * 100.0)),
+            1,
+        )
+
+        risk_level = _risk_level(final_score)
+
+        # Probability farther from 0.5 means stronger model confidence.
+        confidence = round(
+            0.5 + abs(probability - 0.5),
+            2,
+        )
+
+        # Feature contributions are based on the trained tree model's
+        # feature importance and the current feature values.
+        importance = model.feature_importances_
+
+        factors: list[dict] = []
+
+        for index, feature in enumerate(FEATURES):
+
+            raw_value = raw[feature]
+
+            contribution = (
+                raw_value
+                * float(importance[index])
+            )
+
+            factors.append(
+                {
+                    "factor": feature,
+                    "label": FEATURE_LABELS[feature],
+                    "contribution": round(
+                        contribution,
+                        1,
+                    ),
+                    "triggered": (
+                        raw_value >= TRIGGER_THRESHOLD
+                    ),
+                    "description": _describe(
+                        feature,
+                        raw_value,
+                    ),
+                }
+            )
+
+        factors.sort(
+            key=lambda item: item["contribution"],
+            reverse=True,
+        )
+
+        return RiskPrediction(
+            final_score=final_score,
+            risk_level=risk_level,
+            confidence=confidence,
+            recommendation=_recommend(
+                risk_level,
+                factors,
+            ),
+            factors=factors,
+        )
