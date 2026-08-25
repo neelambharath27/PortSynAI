@@ -4,7 +4,19 @@ The model is an actual XGBClassifier trained on a reproducible synthetic
 training dataset because the project currently has no labeled real-world
 customs incident dataset.
 
-The trained model is cached in memory and used for risk prediction.
+The model combines:
+    GPS
+    RFID
+    IoT sensor risk
+    Manifest mismatch
+    YOLO inspection risk
+    Delay / ETA risk
+    LSTM anomaly score
+    Isolation Forest anomaly score
+
+Important:
+This is synthetically trained and must not be described as trained on
+real customs incident data.
 """
 
 from __future__ import annotations
@@ -26,7 +38,10 @@ FEATURES: list[str] = [
     "manifest_score",
     "yolo_score",
     "delay_score",
+    "lstm_anomaly_score",
+    "isolation_forest_score",
 ]
+
 
 FEATURE_LABELS: dict[str, str] = {
     "gps_score": "GPS Deviation",
@@ -35,7 +50,10 @@ FEATURE_LABELS: dict[str, str] = {
     "manifest_score": "Manifest Mismatch",
     "yolo_score": "YOLO Detection",
     "delay_score": "Delay / ETA Risk",
+    "lstm_anomaly_score": "LSTM Prediction Anomaly",
+    "isolation_forest_score": "Isolation Forest Anomaly",
 }
+
 
 TRIGGER_THRESHOLD = 25.0
 
@@ -54,6 +72,8 @@ class RiskInputs:
     manifest_score: float
     yolo_score: float
     delay_score: float
+    lstm_anomaly_score: float
+    isolation_forest_score: float
 
 
 @dataclass
@@ -70,10 +90,13 @@ def _synthetic_training_data(
 ) -> tuple[pd.DataFrame, np.ndarray]:
     """Create a reproducible synthetic training dataset.
 
-    Each feature is represented on a 0-100 risk scale.
+    Every feature is represented on a 0-100 risk scale.
 
-    This is NOT a real customs dataset. It is used only because the project
-    currently does not contain labeled real-world incident outcomes.
+    The labels are generated from a continuous synthetic risk function
+    followed by a probabilistic sampling process. This produces a smoother
+    relationship between risk inputs and XGBoost probability.
+
+    This is NOT a real customs incident dataset.
     """
 
     rng = np.random.default_rng(_RANDOM_SEED)
@@ -85,15 +108,19 @@ def _synthetic_training_data(
 
     df = pd.DataFrame(data)
 
-    # Training relationship used to create synthetic labels.
-    # Higher values indicate higher operational/security risk.
+    # Relative importance of each risk source.
+    #
+    # YOLO remains the strongest individual security signal.
+    # LSTM and Isolation Forest contribute genuine anomaly information.
     weights = {
-        "gps_score": 0.22,
-        "rfid_score": 0.12,
-        "sensor_score": 0.20,
-        "manifest_score": 0.20,
-        "yolo_score": 0.34,
-        "delay_score": 0.10,
+        "gps_score": 0.16,
+        "rfid_score": 0.08,
+        "sensor_score": 0.16,
+        "manifest_score": 0.14,
+        "yolo_score": 0.22,
+        "delay_score": 0.08,
+        "lstm_anomaly_score": 0.08,
+        "isolation_forest_score": 0.08,
     }
 
     weighted_score = sum(
@@ -101,13 +128,49 @@ def _synthetic_training_data(
         for feature, weight in weights.items()
     )
 
-    noise = rng.normal(0, 7, n)
+    # Add a small interaction between the two anomaly detectors.
+    anomaly_interaction = (
+        df["lstm_anomaly_score"]
+        * df["isolation_forest_score"]
+        / 100.0
+    ) * 0.04
 
-    synthetic_score = weighted_score + noise
+    # YOLO + manifest combination represents a stronger inspection signal.
+    inspection_interaction = (
+        df["yolo_score"]
+        * df["manifest_score"]
+        / 100.0
+    ) * 0.06
 
-    threshold = np.percentile(synthetic_score, 65)
+    continuous_score = (
+        weighted_score
+        + anomaly_interaction
+        + inspection_interaction
+    )
 
-    labels = (synthetic_score >= threshold).astype(int)
+    # Convert the continuous risk score into a probability.
+    #
+    # Centering around approximately 50 gives the classifier a smoother
+    # transition from normal to high-risk conditions.
+    logit = (
+        (continuous_score - 50.0) / 10.0
+    )
+
+    probability = 1.0 / (
+        1.0 + np.exp(-logit)
+    )
+
+    # Sample binary outcomes from the generated probability.
+    labels = (
+        rng.random(n) < probability
+    ).astype(int)
+
+    # Ensure both classes are present.
+    if labels.sum() == 0:
+        labels[np.argmax(probability)] = 1
+
+    if labels.sum() == n:
+        labels[np.argmin(probability)] = 0
 
     return df, labels
 
@@ -129,7 +192,7 @@ def _get_model() -> XGBClassifier:
         model = XGBClassifier(
             n_estimators=150,
             max_depth=4,
-            learning_rate=0.08,
+            learning_rate=0.06,
             subsample=0.9,
             colsample_bytree=0.9,
             objective="binary:logistic",
@@ -148,12 +211,18 @@ def _get_model() -> XGBClassifier:
 def _risk_level(score: float) -> RiskLevel:
     if score >= 61:
         return RiskLevel.HIGH
+
     if score >= 31:
         return RiskLevel.MEDIUM
+
     return RiskLevel.LOW
 
 
-def _describe(key: str, value: float) -> str:
+def _describe(
+    key: str,
+    value: float,
+) -> str:
+
     if value < TRIGGER_THRESHOLD:
         return "Within normal range"
 
@@ -177,9 +246,19 @@ def _describe(key: str, value: float) -> str:
         "delay_score": (
             "Container is significantly behind its predicted schedule"
         ),
+        "lstm_anomaly_score": (
+            "LSTM detected an unusual future sensor-state pattern"
+        ),
+        "isolation_forest_score": (
+            "Isolation Forest detected anomalous container telemetry"
+        ),
     }
 
-    return descriptions[key]
+    return descriptions.get(
+        key,
+        "Risk factor exceeded the normal threshold",
+    )
+
 
 def _recommend(
     risk_level: RiskLevel,
@@ -201,7 +280,6 @@ def _recommend(
     return "Proceed Normally"
 
 
-
 class XGBoostRiskService:
     """Actual XGBoost inference service."""
 
@@ -210,7 +288,11 @@ class XGBoostRiskService:
         return _get_model()
 
     @classmethod
-    def score(cls, inputs: RiskInputs) -> RiskPrediction:
+    def score(
+        cls,
+        inputs: RiskInputs,
+    ) -> RiskPrediction:
+
         model = cls.get_model()
 
         raw = {
@@ -220,6 +302,12 @@ class XGBoostRiskService:
             "manifest_score": float(inputs.manifest_score),
             "yolo_score": float(inputs.yolo_score),
             "delay_score": float(inputs.delay_score),
+            "lstm_anomaly_score": float(
+                inputs.lstm_anomaly_score
+            ),
+            "isolation_forest_score": float(
+                inputs.isolation_forest_score
+            ),
         }
 
         row = pd.DataFrame(
@@ -231,22 +319,34 @@ class XGBoostRiskService:
             model.predict_proba(row)[0][1]
         )
 
-        # Convert model probability to the application's 0-100 risk score.
+        # Convert model probability to the application's
+        # 0-100 risk score.
         final_score = round(
-            max(0.0, min(100.0, probability * 100.0)),
+            max(
+                0.0,
+                min(
+                    100.0,
+                    probability * 100.0,
+                ),
+            ),
             1,
         )
 
-        risk_level = _risk_level(final_score)
+        risk_level = _risk_level(
+            final_score
+        )
 
-        # Probability farther from 0.5 means stronger model confidence.
+        # Probability farther from 0.5 means stronger
+        # model confidence.
         confidence = round(
-            0.5 + abs(probability - 0.5),
+            0.5 + abs(
+                probability - 0.5
+            ),
             2,
         )
 
-        # Feature contributions are based on the trained tree model's
-        # feature importance and the current feature values.
+        # Feature contributions are based on the trained
+        # tree model's feature importance.
         importance = model.feature_importances_
 
         factors: list[dict] = []
@@ -269,7 +369,8 @@ class XGBoostRiskService:
                         1,
                     ),
                     "triggered": (
-                        raw_value >= TRIGGER_THRESHOLD
+                        raw_value
+                        >= TRIGGER_THRESHOLD
                     ),
                     "description": _describe(
                         feature,
