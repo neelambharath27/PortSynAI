@@ -46,6 +46,12 @@ class InspectionStatus(str, enum.Enum):
     PASSED = "passed"
     FLAGGED = "flagged"
 
+class ThreatLevel(str, enum.Enum):
+    NONE = "none"
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    CRITICAL = "critical"
 
 class ClearanceStatus(str, enum.Enum):
     PENDING = "pending"
@@ -63,3 +69,14 @@ class ShipStatus(str, enum.Enum):
     DOCKED = "docked"
     EN_ROUTE = "en_route"
     DEPARTING = "departing"
+
+class TwinRiskLevel(str, enum.Enum):
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    CRITICAL = "critical"
+    
+class ConnectivityStatus(str, enum.Enum):
+    CONNECTED = "connected"
+    DEGRADED = "degraded"
+    LOST = "lost"

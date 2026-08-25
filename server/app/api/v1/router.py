@@ -1,6 +1,19 @@
 from fastapi import APIRouter
 
-from app.api.v1 import auth, users, ports, ships, containers, alerts, admin, tracking, dashboard
+from app.api.v1 import (
+    auth,
+    users,
+    ports,
+    ships,
+    containers,
+    alerts,
+    admin,
+    tracking,
+    dashboard,
+    digital_twin,
+    cargo_inspection,
+    risk_assessment,
+)
 
 api_router = APIRouter()
 
@@ -13,3 +26,6 @@ api_router.include_router(tracking.router)
 api_router.include_router(dashboard.router)
 api_router.include_router(alerts.router)
 api_router.include_router(admin.router)
+api_router.include_router(digital_twin.router)
+api_router.include_router(cargo_inspection.router)
+api_router.include_router(risk_assessment.router)
