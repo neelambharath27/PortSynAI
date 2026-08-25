@@ -38,11 +38,49 @@ can_view_twin = require_role(UserRole.ADMINISTRATOR, UserRole.PORT_OPERATOR)
     response_model=list[TwinContainerOption],
     dependencies=[Depends(can_view_twin)],
 )
-def list_twin_containers(db: Session = Depends(get_db)) -> list[Container]:
+def list_twin_containers(
+    db: Session = Depends(get_db),
+) -> list[TwinContainerOption]:
     """Lightweight list for the container picker on the Digital Twin page."""
-    stmt = select(Container).order_by(Container.container_code)
-    return list(db.scalars(stmt))
 
+    snapshot = build_twin_snapshot(db)
+
+    result: list[TwinContainerOption] = []
+
+    for twin in snapshot["twins"]:
+        result.append(
+            TwinContainerOption(
+                container_id=twin["container_id"],
+                container_code=twin["container_code"],
+                ship_name=twin.get("ship_name"),
+                status=twin["status"],
+                risk_level=twin["risk_level"],
+                health_score=twin["health_score"],
+            )
+        )
+
+    return result
+
+    """Lightweight list for the container picker on the Digital Twin page."""
+
+    stmt = select(Container).order_by(Container.container_code)
+    containers = list(db.scalars(stmt))
+
+    result: list[TwinContainerOption] = []
+
+    for container in containers:
+        result.append(
+            TwinContainerOption(
+                container_id=container.id,
+                container_code=container.container_code,
+                ship_name=getattr(container, "ship_name", None),
+                status=str(container.status),
+                risk_level="warning",
+                health_score=0.0,
+            )
+        )
+
+    return result
 
 @router.get(
     "",
@@ -96,7 +134,7 @@ def get_twin_history(
         select(SensorReading)
         .where(SensorReading.container_id == container_id, SensorReading.recorded_at >= since)
         .order_by(SensorReading.recorded_at.asc())
-        .limit(500)
+        .limit(120)
     )
     readings = list(db.scalars(stmt))
 

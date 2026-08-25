@@ -137,15 +137,29 @@ class TwinHistoryOut(BaseModel):
 
 
 class TwinSummary(BaseModel):
-    """Summary information for one container's digital twin."""
+    """Complete information for one container's digital twin."""
 
     container_id: str
     container_code: str
     ship_name: str | None = None
+
+    rfid_status: str = "active"
+    rfid_tag: str | None = None
+
     status: str
     risk_level: str
     health_score: float
 
+    cargo_type: str | None = None
+
+    lat: float | None = None
+    lng: float | None = None
+
+    origin_port: str | None = None
+    destination_port: str | None = None
+
+    eta: datetime | None = None
+    distance_remaining_km: float | None = None
 
 class TwinSnapshot(BaseModel):
     """Complete Digital Twin snapshot containing all container twins."""
