@@ -5,12 +5,12 @@ from pydantic import BaseModel, ConfigDict
 from app.models.enums import RiskLevel
 
 
-class RiskFactor(BaseModel):
-    factor: str
+class ShapContributionOut(BaseModel):
+    feature: str
     label: str
-    contribution: float  # signed points contributed to the final 0-100 score
-    triggered: bool
-    description: str
+    feature_value: float
+    shap_value: float
+    direction: str
 
 
 class RiskAssessmentOut(BaseModel):
@@ -19,25 +19,31 @@ class RiskAssessmentOut(BaseModel):
     id: str
     container_id: str
     container_code: str | None = None
+
     gps_score: float
     rfid_score: float
     sensor_score: float
     manifest_score: float
     yolo_score: float
-    delay_score: float
+
+    lstm_anomaly_score: float
+    isolation_forest_score: float
+
     final_score: float
     risk_level: RiskLevel
-    confidence: float
-    recommendation: str
-    risk_factors: list[RiskFactor]
+
     computed_at: datetime
+
+    # SHAP explanation
+    shap_base_value: float | None = None
+    shap_probability: float | None = None
+    shap_contributions: list[ShapContributionOut] = []
 
 
 class RiskAssessmentRequest(BaseModel):
-    """Manually trigger a (re)assessment for one container. All fields are
-    optional overrides — omitted ones fall back to the container's live
-    sensor/tracking/inspection data, same as the automatic background
-    scoring loop uses."""
+    """
+    Manually trigger a risk assessment for one container.
+    """
 
     container_id: str
 

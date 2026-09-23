@@ -1,25 +1,15 @@
-# ---------------------------------------------------------------------------
-# Risk assessment
-# ---------------------------------------------------------------------------
-
 from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
 
 from app.models.container import Container
-
 from app.models.risk_score import RiskScore
+from app.models.shap_explanation import ShapExplanation
+
+from app.ml.services.risk_engine import gather_inputs
+from app.ml.shap_explain.service import explain
 
 from app.services.xgboost_risk import XGBoostRiskService
-# IMPORTANT:
-# Keep/import these from the locations where they already exist
-# in your project.
-#
-# Example:
-# from app.models.container import Container
-# from app.models.risk_score import RiskScore
-# from app.services.risk_engine_inputs import gather_inputs
-# from app.services.xgboost_risk import XGBoostRiskService
 
 
 def assess_container(
@@ -42,74 +32,106 @@ def assess_container(
         GPS / RFID / Sensor / Manifest / YOLO / Delay
                 |
                 v
-        8-feature XGBoost
+          8-feature XGBoost
                 |
-                v
-        Final Risk Score
-                |
-                v
-          RiskScore database row
+                +------------------+
+                |                  |
+                v                  v
+          Final Risk Score       SHAP
+                |                  |
+                +---------+--------+
+                          |
+                          v
+                  RiskScore + SHAP
     """
 
-    # ------------------------------------------------------------------
-    # Gather all 8 XGBoost inputs
-    # ------------------------------------------------------------------
+    # --------------------------------------------------------------
+    # 1. Gather all risk inputs
+    # --------------------------------------------------------------
 
     inputs = gather_inputs(
         db=db,
         container=container,
     )
 
-    # ------------------------------------------------------------------
-    # XGBoost risk fusion
-    #
-    # The XGBoost model receives:
-    #
-    # 1. GPS
-    # 2. RFID
-    # 3. Sensor
-    # 4. Manifest
-    # 5. YOLO
-    # 6. Delay
-    # 7. LSTM anomaly
-    # 8. Isolation Forest anomaly
-    # ------------------------------------------------------------------
+    # --------------------------------------------------------------
+    # 2. XGBoost risk fusion
+    # --------------------------------------------------------------
 
-    prediction = XGBoostRiskService.score(inputs)
+    prediction = XGBoostRiskService.score(
+        inputs
+    )
 
-    # ------------------------------------------------------------------
-    # Create RiskScore database record
-    # ------------------------------------------------------------------
+    # --------------------------------------------------------------
+    # 3. Create RiskScore database record
+    # --------------------------------------------------------------
 
     score_row = RiskScore(
         container_id=container.id,
 
-        # Existing risk features
         gps_score=inputs.gps_score,
         rfid_score=inputs.rfid_score,
         sensor_score=inputs.sensor_score,
         manifest_score=inputs.manifest_score,
         yolo_score=inputs.yolo_score,
 
-        # Delay / ETA risk
-        delay_score=inputs.delay_score,
-
-        # ML anomaly features
         lstm_anomaly_score=inputs.lstm_anomaly_score,
         isolation_forest_score=inputs.isolation_forest_score,
 
-        # Final XGBoost result
         final_score=prediction.final_score,
         risk_level=prediction.risk_level,
 
-        # UTC timestamp
-        computed_at=datetime.now(timezone.utc),
+        computed_at=datetime.now(
+            timezone.utc
+        ),
     )
 
-    # ------------------------------------------------------------------
-    # Add record to current SQLAlchemy transaction
-    # ------------------------------------------------------------------
-
     db.add(score_row)
+
+    # Flush first so score_row.id is available for the SHAP foreign key.
+    db.flush()
+
+    # --------------------------------------------------------------
+    # 4. Build feature vector for SHAP
+    # --------------------------------------------------------------
+
+    feature_vector = {
+        "gps_score": inputs.gps_score,
+        "rfid_score": inputs.rfid_score,
+        "sensor_score": inputs.sensor_score,
+        "manifest_score": inputs.manifest_score,
+        "yolo_score": inputs.yolo_score,
+        "delay_score": inputs.delay_score,
+        "lstm_anomaly_score": inputs.lstm_anomaly_score,
+        "isolation_forest_score": inputs.isolation_forest_score,
+    }
+
+    # --------------------------------------------------------------
+    # 5. Explain the SAME XGBoost model using SHAP
+    # --------------------------------------------------------------
+
+    shap_result = explain(
+        feature_vector
+    )
+
+    # --------------------------------------------------------------
+    # 6. Persist the eight SHAP contributions
+    # --------------------------------------------------------------
+
+    for rank, contribution in enumerate(
+        shap_result["contributions"],
+        start=1,
+    ):
+
+        shap_row = ShapExplanation(
+            risk_score_id=score_row.id,
+            feature_name=contribution["feature"],
+            contribution_value=float(
+                contribution["shap_value"]
+            ),
+            rank=rank,
+        )
+
+        db.add(shap_row)
 
     return score_row
