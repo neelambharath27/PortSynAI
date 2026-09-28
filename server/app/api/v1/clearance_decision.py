@@ -477,3 +477,77 @@ def reject_clearance(
             f"AI recommendation: {clearance.decision.value.upper()}."
         ),
     )
+
+# ============================================================
+# GET BLOCKCHAIN CLEARANCE RECORD
+# ============================================================
+
+@router.get(
+    "/{container_id}/record",
+    dependencies=[Depends(get_current_user)],
+)
+def get_clearance_record(
+    container_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    container = db.scalar(
+        select(Container).where(Container.id == container_id)
+    )
+
+    if not container:
+        raise HTTPException(
+            status_code=404,
+            detail="Container not found",
+        )
+
+    clearance = db.scalar(
+        select(Clearance)
+        .where(Clearance.container_id == container_id)
+        .order_by(Clearance.timestamp.desc())
+    )
+
+    if not clearance:
+        raise HTTPException(
+            status_code=404,
+            detail="No clearance record found for this container",
+        )
+
+    risk_score = db.scalar(
+        select(RiskScore)
+        .where(RiskScore.id == clearance.risk_score_id)
+    )
+
+    if not risk_score:
+        raise HTTPException(
+            status_code=404,
+            detail="Linked risk assessment not found",
+        )
+
+    audit = db.scalar(
+        select(AuditLog)
+        .where(
+            AuditLog.entity_type == "clearance",
+            AuditLog.entity_id == clearance.id,
+        )
+        .order_by(AuditLog.created_at.desc())
+    )
+
+    return {
+        "container_id": container.id,
+        "container_code": container.container_code,
+        "risk_score": float(risk_score.final_score),
+        "risk_level": risk_score.risk_level.value,
+        "decision": clearance.decision.value,
+        "reason": (
+            f"Risk score {float(risk_score.final_score):.1f} "
+            f"maps to {clearance.decision.value.upper()}."
+        ),
+        "status": clearance.status.value,
+        "transaction_id": clearance.transaction_id,
+        "blockchain_hash": clearance.blockchain_hash,
+        "officer_id": clearance.officer_id,
+        "timestamp": clearance.timestamp,
+        "audit_action": audit.action if audit else None,
+        "audit_timestamp": audit.created_at if audit else None,
+    }
