@@ -63,7 +63,7 @@ export async function downloadInspectionReport(
   const response = await api.get(`/cargo-inspection/${id}/report`, {
     responseType: "blob",
   });
-  const url = window.URL.createObjectURL(new Blob([response.data]));
+  const url = window.URL.createObjectURL(new Blob([response.data]));  
   const link = document.createElement("a");
   link.href = url;
   link.download = `inspection-${containerCode}.pdf`;
