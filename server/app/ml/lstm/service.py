@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import threading
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -35,6 +36,16 @@ TRAIN_SEQUENCES = 600
 EPOCHS = 60
 LEARNING_RATE = 0.005
 RANDOM_SEED = 42
+
+# Persistent model cache.
+# File:
+# server/storage/models/sensor_lstm_model.pt
+MODEL_CACHE_PATH = (
+    Path(__file__).resolve().parents[3]
+    / "storage"
+    / "models"
+    / "sensor_lstm_model.pt"
+)
 
 _lock = threading.Lock()
 _model: "SensorLSTM | None" = None
@@ -149,8 +160,15 @@ def _generate_training_data() -> tuple[torch.Tensor, torch.Tensor]:
         # 13th reading is the prediction target.
         targets.append(rows_array[SEQUENCE_LENGTH])
 
-    x = torch.tensor(np.asarray(sequences), dtype=torch.float32)
-    y = torch.tensor(np.asarray(targets), dtype=torch.float32)
+    x = torch.tensor(
+        np.asarray(sequences),
+        dtype=torch.float32,
+    )
+
+    y = torch.tensor(
+        np.asarray(targets),
+        dtype=torch.float32,
+    )
 
     return x, y
 
@@ -171,11 +189,16 @@ _FEATURE_MAX = torch.tensor(
 
 
 def _normalize(x: torch.Tensor) -> torch.Tensor:
-    return (x - _FEATURE_MIN) / (_FEATURE_MAX - _FEATURE_MIN)
+    return (x - _FEATURE_MIN) / (
+        _FEATURE_MAX - _FEATURE_MIN
+    )
 
 
 def _denormalize(x: torch.Tensor) -> torch.Tensor:
-    return x * (_FEATURE_MAX - _FEATURE_MIN) + _FEATURE_MIN
+    return (
+        x * (_FEATURE_MAX - _FEATURE_MIN)
+        + _FEATURE_MIN
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -183,6 +206,8 @@ def _denormalize(x: torch.Tensor) -> torch.Tensor:
 # ---------------------------------------------------------------------------
 
 def _train_model() -> SensorLSTM:
+    """Train the LSTM using deterministic synthetic data."""
+
     torch.manual_seed(RANDOM_SEED)
     np.random.seed(RANDOM_SEED)
 
@@ -221,20 +246,135 @@ def _train_model() -> SensorLSTM:
 
 
 # ---------------------------------------------------------------------------
+# Save model
+# ---------------------------------------------------------------------------
+
+def _save_model(model: SensorLSTM) -> None:
+    """Persist the trained model weights to disk."""
+
+    try:
+        MODEL_CACHE_PATH.parent.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+        torch.save(
+            model.state_dict(),
+            MODEL_CACHE_PATH,
+        )
+
+        print(
+            f"[LSTM] Model cached at: "
+            f"{MODEL_CACHE_PATH}"
+        )
+
+    except Exception as exc:
+        # Prediction must still work even if caching fails.
+        print(
+            f"[LSTM] Warning: could not save model cache: {exc}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Load model
+# ---------------------------------------------------------------------------
+
+def _load_cached_model() -> SensorLSTM | None:
+    """Load the cached LSTM weights if available."""
+
+    if not MODEL_CACHE_PATH.exists():
+        return None
+
+    try:
+        model = SensorLSTM()
+
+        try:
+            state_dict = torch.load(
+                MODEL_CACHE_PATH,
+                map_location="cpu",
+                weights_only=True,
+            )
+        except TypeError:
+            # Compatibility with older PyTorch versions.
+            state_dict = torch.load(
+                MODEL_CACHE_PATH,
+                map_location="cpu",
+            )
+
+        model.load_state_dict(state_dict)
+        model.eval()
+
+        print(
+            f"[LSTM] Loaded cached model: "
+            f"{MODEL_CACHE_PATH}"
+        )
+
+        return model
+
+    except Exception as exc:
+        print(
+            f"[LSTM] Warning: cached model could not be loaded: "
+            f"{exc}"
+        )
+
+        return None
+
+
+# ---------------------------------------------------------------------------
 # Get singleton model
 # ---------------------------------------------------------------------------
 
 def _get_model() -> SensorLSTM:
+    """
+    Return the singleton LSTM model.
+
+    Loading order:
+        1. Return the in-memory singleton if available.
+        2. Load the cached model from disk.
+        3. Train a new model only when no valid cache exists.
+        4. Save newly trained weights for future server starts.
+    """
+
     global _model
 
+    # Fastest path: model already loaded in memory.
     if _model is not None:
         return _model
 
     with _lock:
-        if _model is None:
-            _model = _train_model()
+        # Another thread may have initialized it
+        # while this thread waited for the lock.
+        if _model is not None:
+            return _model
 
-    return _model
+        # ---------------------------------------------------------------
+        # Try persistent cache first.
+        # ---------------------------------------------------------------
+
+        cached_model = _load_cached_model()
+
+        if cached_model is not None:
+            _model = cached_model
+            return _model
+
+        # ---------------------------------------------------------------
+        # No usable cache → train once.
+        # ---------------------------------------------------------------
+
+        print(
+            "[LSTM] No valid cached model found. "
+            "Training model..."
+        )
+
+        _model = _train_model()
+
+        # ---------------------------------------------------------------
+        # Persist trained weights.
+        # ---------------------------------------------------------------
+
+        _save_model(_model)
+
+        return _model
 
 
 # ---------------------------------------------------------------------------
@@ -260,18 +400,34 @@ def predict_next_sensor_state(
 
     if len(readings) < SEQUENCE_LENGTH:
         raise ValueError(
-            f"LSTM requires at least {SEQUENCE_LENGTH} sensor readings; "
+            f"LSTM requires at least "
+            f"{SEQUENCE_LENGTH} sensor readings; "
             f"received {len(readings)}."
         )
 
-    values = []
+    values: list[list[float]] = []
 
     for reading in readings[-SEQUENCE_LENGTH:]:
         values.append(
             [
-                float(reading.get("temperature", 0.0)),
-                float(reading.get("humidity", 0.0)),
-                float(reading.get("battery_level", 100.0)),
+                float(
+                    reading.get(
+                        "temperature",
+                        0.0,
+                    )
+                ),
+                float(
+                    reading.get(
+                        "humidity",
+                        0.0,
+                    )
+                ),
+                float(
+                    reading.get(
+                        "battery_level",
+                        100.0,
+                    )
+                ),
             ]
         )
 
@@ -285,38 +441,69 @@ def predict_next_sensor_state(
     model = _get_model()
 
     with torch.no_grad():
-        prediction_normalized = model(sequence_normalized)
+        prediction_normalized = model(
+            sequence_normalized
+        )
 
-    prediction = _denormalize(prediction_normalized[0])
+    prediction = _denormalize(
+        prediction_normalized[0]
+    )
 
     predicted_temperature = float(
-        torch.clamp(prediction[0], 5.0, 45.0)
+        torch.clamp(
+            prediction[0],
+            5.0,
+            45.0,
+        )
     )
 
     predicted_humidity = float(
-        torch.clamp(prediction[1], 10.0, 100.0)
+        torch.clamp(
+            prediction[1],
+            10.0,
+            100.0,
+        )
     )
 
     predicted_battery = float(
-        torch.clamp(prediction[2], 0.0, 100.0)
+        torch.clamp(
+            prediction[2],
+            0.0,
+            100.0,
+        )
     )
 
-    # Compare the predicted state with the latest observed state.
+    # -----------------------------------------------------------------------
+    # Compare prediction with latest observed state.
+    # -----------------------------------------------------------------------
+
     latest = sequence[0, -1]
 
     differences = torch.tensor(
         [
-            abs(predicted_temperature - float(latest[0])),
-            abs(predicted_humidity - float(latest[1])),
-            abs(predicted_battery - float(latest[2])),
+            abs(
+                predicted_temperature
+                - float(latest[0])
+            ),
+            abs(
+                predicted_humidity
+                - float(latest[1])
+            ),
+            abs(
+                predicted_battery
+                - float(latest[2])
+            ),
         ],
         dtype=torch.float32,
     )
 
     # Normalize the differences so they can be combined.
-    normalized_difference = differences / torch.tensor(
-        [40.0, 90.0, 100.0],
-        dtype=torch.float32,
+    normalized_difference = (
+        differences
+        / torch.tensor(
+            [40.0, 90.0, 100.0],
+            dtype=torch.float32,
+        )
     )
 
     anomaly_score = float(
@@ -327,22 +514,39 @@ def predict_next_sensor_state(
         )
     )
 
-    # Confidence decreases as the prediction moves further away from the
-    # latest observed state.
+    # Confidence decreases as the prediction moves
+    # further away from the latest observed state.
     prediction_confidence = float(
         np.clip(
-            1.0 - (anomaly_score / 150.0),
+            1.0 - (
+                anomaly_score / 150.0
+            ),
             0.50,
             0.99,
         )
     )
 
     return LSTMPrediction(
-        predicted_temperature=round(predicted_temperature, 2),
-        predicted_humidity=round(predicted_humidity, 2),
-        predicted_battery_level=round(predicted_battery, 2),
-        anomaly_score=round(anomaly_score, 2),
-        prediction_confidence=round(prediction_confidence, 2),
+        predicted_temperature=round(
+            predicted_temperature,
+            2,
+        ),
+        predicted_humidity=round(
+            predicted_humidity,
+            2,
+        ),
+        predicted_battery_level=round(
+            predicted_battery,
+            2,
+        ),
+        anomaly_score=round(
+            anomaly_score,
+            2,
+        ),
+        prediction_confidence=round(
+            prediction_confidence,
+            2,
+        ),
     )
 
 
@@ -352,7 +556,7 @@ def predict_next_sensor_state(
 
 def health_check() -> dict[str, object]:
     """
-    Train/load the model and return basic information.
+    Load/train the model and return basic information.
     """
 
     model = _get_model()
@@ -371,5 +575,11 @@ def health_check() -> dict[str, object]:
         "epochs": EPOCHS,
         "parameter_count": parameter_count,
         "device": "cpu",
+        "model_cache_path": str(
+            MODEL_CACHE_PATH
+        ),
+        "model_cache_exists": (
+            MODEL_CACHE_PATH.exists()
+        ),
         "status": "ready",
     }
