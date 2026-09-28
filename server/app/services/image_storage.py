@@ -1,62 +1,105 @@
-"""Local-disk implementation of image storage for uploaded X-ray scans.
-
-Kept behind a narrow interface (save/url/path) so swapping this for S3/GCS
-in production only touches this one file, not the API layer that calls it.
-"""
-
-import uuid
 from pathlib import Path
+from uuid import uuid4
 
-from fastapi import HTTPException, UploadFile, status
+from fastapi import UploadFile
 
-from app.config import settings
-
-ALLOWED_CONTENT_TYPES = {"image/jpeg", "image/png", "image/webp"}
-
-
-def _inspections_dir() -> Path:
-    path = Path(settings.STORAGE_DIR) / "inspections"
-    path.mkdir(parents=True, exist_ok=True)
-    return path
+from app.core.config import settings
 
 
-def _reports_dir() -> Path:
-    path = Path(settings.STORAGE_DIR) / "reports"
-    path.mkdir(parents=True, exist_ok=True)
-    return path
+ALLOWED_CONTENT_TYPES = {
+    "image/jpeg": ".jpg",
+    "image/png": ".png",
+    "image/webp": ".webp",
+}
 
 
-async def save_inspection_image(container_id: str, upload: UploadFile) -> str:
-    """Validates and persists an uploaded X-ray image, returns a relative
-    path suitable for storing on the Inspection row and serving via the
-    /storage static mount."""
+def _storage_root() -> Path:
+    return Path(settings.STORAGE_DIR)
 
-    if upload.content_type not in ALLOWED_CONTENT_TYPES:
-        raise ForbiddenException(
-            f"Unsupported image type '{upload.content_type}'. Allowed: JPEG, PNG, WEBP."
+
+def _inspection_directory(container_id: str) -> Path:
+    return _storage_root() / "inspections" / container_id
+
+
+def report_disk_path(relative_path: str) -> Path:
+    """
+    Convert a stored relative inspection image path
+    into an absolute/local filesystem path.
+    """
+    return _storage_root() / relative_path
+
+
+async def save_inspection_image(
+    container_id: str,
+    file: UploadFile,
+) -> str:
+    """
+    Validate and save an inspection image.
+
+    Returns the relative path stored in the database.
+    """
+
+    # ------------------------------------------------------------
+    # Validate content type
+    # ------------------------------------------------------------
+    if file.content_type not in ALLOWED_CONTENT_TYPES:
+        allowed = ", ".join(ALLOWED_CONTENT_TYPES.keys())
+
+        raise ValueError(
+            f"Unsupported image type: {file.content_type}. "
+            f"Allowed types: {allowed}"
         )
 
+    # ------------------------------------------------------------
+    # Read uploaded file
+    # ------------------------------------------------------------
+    contents = await file.read()
+
+    if not contents:
+        raise ValueError("Uploaded image is empty.")
+
+    # ------------------------------------------------------------
+    # Validate file size
+    # ------------------------------------------------------------
     max_bytes = settings.MAX_UPLOAD_IMAGE_MB * 1024 * 1024
-    contents = await upload.read()
+
     if len(contents) > max_bytes:
-        raise ForbiddenException(
-            f"Image exceeds the {settings.MAX_UPLOAD_IMAGE_MB}MB upload limit."
+        raise ValueError(
+            f"Image exceeds the "
+            f"{settings.MAX_UPLOAD_IMAGE_MB}MB upload limit."
         )
 
-    extension = Path(upload.filename or "").suffix.lower() or ".jpg"
-    if extension not in (".jpg", ".jpeg", ".png", ".webp"):
-        extension = ".jpg"
+    # ------------------------------------------------------------
+    # Create inspection directory
+    # ------------------------------------------------------------
+    inspection_dir = _inspection_directory(container_id)
 
-    filename = f"{container_id}_{uuid.uuid4().hex}{extension}"
-    destination = _inspections_dir() / filename
-    destination.write_bytes(contents)
+    inspection_dir.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
 
-    return f"inspections/{filename}"
+    # ------------------------------------------------------------
+    # Generate unique filename
+    # ------------------------------------------------------------
+    extension = ALLOWED_CONTENT_TYPES[file.content_type]
 
+    filename = f"{uuid4()}{extension}"
 
-def image_disk_path(relative_path: str) -> Path:
-    return Path(settings.STORAGE_DIR) / relative_path
+    file_path = inspection_dir / filename
 
+    # ------------------------------------------------------------
+    # Save image
+    # ------------------------------------------------------------
+    file_path.write_bytes(contents)
 
-def report_disk_path(inspection_id: str) -> Path:
-    return _reports_dir() / f"{inspection_id}.pdf"
+    # ------------------------------------------------------------
+    # Return database-relative path
+    # ------------------------------------------------------------
+    relative_path = (
+        Path("inspections")
+        / container_id
+        / filename
+    )
+
+    return relative_path.as_posix()

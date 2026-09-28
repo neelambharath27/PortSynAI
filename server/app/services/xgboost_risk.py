@@ -42,18 +42,16 @@ FEATURES: list[str] = [
     "isolation_forest_score",
 ]
 
-
 FEATURE_LABELS: dict[str, str] = {
-    "gps_score": "GPS Deviation",
-    "rfid_score": "RFID Failure",
-    "sensor_score": "Sensor Anomaly",
-    "manifest_score": "Manifest Mismatch",
-    "yolo_score": "YOLO Detection",
-    "delay_score": "Delay / ETA Risk",
-    "lstm_anomaly_score": "LSTM Prediction Anomaly",
+    "gps_score": "GPS Risk",
+    "rfid_score": "RFID Risk",
+    "sensor_score": "Sensor Risk",
+    "manifest_score": "Manifest Risk",
+    "yolo_score": "X-ray / YOLO Risk",
+    "delay_score": "Delay Risk",
+    "lstm_anomaly_score": "LSTM Anomaly",
     "isolation_forest_score": "Isolation Forest Anomaly",
 }
-
 
 TRIGGER_THRESHOLD = 25.0
 
