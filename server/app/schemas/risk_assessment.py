@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.models.enums import RiskLevel
 
@@ -8,7 +8,7 @@ from app.models.enums import RiskLevel
 class ShapContributionOut(BaseModel):
     feature: str
     label: str
-    feature_value: float
+    feature_value: float | None = None
     shap_value: float
     direction: str
 
@@ -37,7 +37,9 @@ class RiskAssessmentOut(BaseModel):
     # SHAP explanation
     shap_base_value: float | None = None
     shap_probability: float | None = None
-    shap_contributions: list[ShapContributionOut] = []
+    shap_contributions: list[ShapContributionOut] = Field(
+        default_factory=list
+    )
 
 
 class RiskAssessmentRequest(BaseModel):
