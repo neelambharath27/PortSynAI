@@ -19,6 +19,7 @@ import { BlockchainPage } from "../pages/Blockchain/BlockchainPage";
 import { AlertsPage } from "../pages/Alerts/AlertsPage";
 import { ReportsPage } from "../pages/Reports/ReportsPage";
 import { AdminPage } from "../pages/Admin/AdminPage";
+import { AuditTrailPage } from "../pages/AuditTrail/AuditTrailPage";
 import { SettingsPage } from "../pages/Settings/SettingsPage";
 import { UnauthorizedPage } from "../pages/Unauthorized/UnauthorizedPage";
 import { NotFoundPage } from "../pages/NotFoundPage";
@@ -116,9 +117,10 @@ export function AppRoutes() {
             <Route path="/dashboard/reports" element={<ReportsPage />} />
           </Route>
 
-          <Route element={<RoleBasedRoute allowedRoles={["administrator"]} />}>
-            <Route path="/dashboard/admin" element={<AdminPage />} />
-          </Route>
+               <Route element={<RoleBasedRoute allowedRoles={["administrator"]} />}>
+  	       <Route path="/dashboard/admin" element={<AdminPage />} />
+  	       <Route path="/dashboard/audit-trail" element={<AuditTrailPage />} />
+     </Route>
         </Route>
       </Route>
 
