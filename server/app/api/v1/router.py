@@ -15,6 +15,7 @@ from app.api.v1 import (
     risk_assessment,
     prediction,
     clearance_decision,
+    anomaly_detection,
 )
 
 
@@ -34,3 +35,4 @@ api_router.include_router(cargo_inspection.router)
 api_router.include_router(risk_assessment.router)
 api_router.include_router(prediction.router)
 api_router.include_router(clearance_decision.router)
+api_router.include_router(anomaly_detection.router)
