@@ -59,6 +59,11 @@ class ClearanceStatus(str, enum.Enum):
     REJECTED = "rejected"
 
 
+class ClearanceDecision(str, enum.Enum):
+    CLEAR = "clear"
+    INSPECT = "inspect"
+    HOLD = "hold"
+
 class AlertSeverity(str, enum.Enum):
     INFO = "info"
     WARNING = "warning"

@@ -167,4 +167,7 @@ class YOLOInferenceService:
         }
         peak = max(severities[d.threat_level] for d in detections)
         flagged_count = sum(1 for d in detections if severities[d.threat_level] >= 35)
-        return round(min(100.0, peak + (flagged_count - 1) * 3), 1)
+        return round(
+    max(0.0, min(100.0, peak + max(0, flagged_count - 1) * 3)),
+    1,
+)

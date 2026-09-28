@@ -14,6 +14,7 @@ from app.api.v1 import (
     cargo_inspection,
     risk_assessment,
     prediction,
+    clearance_decision,
 )
 
 
@@ -32,3 +33,4 @@ api_router.include_router(digital_twin.router)
 api_router.include_router(cargo_inspection.router)
 api_router.include_router(risk_assessment.router)
 api_router.include_router(prediction.router)
+api_router.include_router(clearance_decision.router)
