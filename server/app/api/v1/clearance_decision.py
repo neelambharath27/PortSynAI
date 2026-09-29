@@ -139,6 +139,35 @@ def create_clearance_decision(
         risk_level=risk_score.risk_level,
     )
 
+        # --------------------------------------------------------
+    # PREVENT DUPLICATE ACTIVE CLEARANCE DECISIONS
+    # --------------------------------------------------------
+    # Reuse the latest pending clearance instead of creating
+    # another active record for the same container.
+    # --------------------------------------------------------
+
+    existing_clearance = db.scalar(
+        select(Clearance)
+        .where(
+            Clearance.container_id == container_id,
+            Clearance.status == ClearanceStatus.PENDING,
+        )
+        .order_by(Clearance.timestamp.desc())
+    )
+
+    if existing_clearance:
+        return ClearanceDecisionOut(
+            container_id=container.id,
+            container_code=container.container_code,
+            risk_score=result.risk_score,
+            risk_level=result.risk_level,
+            decision=existing_clearance.decision,
+            reason=(
+                "An active pending clearance decision already exists "
+                "for this container."
+            ),
+        )
+
     clearance = Clearance(
         container_id=container.id,
         risk_score_id=risk_score.id,

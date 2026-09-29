@@ -12,7 +12,9 @@ import {
   DocumentChartBarIcon,
   UsersIcon,
   Cog6ToothIcon,
+  ServerStackIcon,
 } from "@heroicons/react/24/outline";
+
 import type { NavSection } from "../types/nav";
 
 const ALL_ROLES = [
@@ -34,6 +36,7 @@ export const NAV_SECTIONS: NavSection[] = [
       },
     ],
   },
+
   {
     title: "Operations",
     items: [
@@ -63,6 +66,7 @@ export const NAV_SECTIONS: NavSection[] = [
       },
     ],
   },
+
   {
     title: "Cargo & Compliance",
     items: [
@@ -70,7 +74,11 @@ export const NAV_SECTIONS: NavSection[] = [
         label: "Cargo Inspection",
         path: "/dashboard/inspection",
         icon: ViewfinderCircleIcon,
-        roles: ["administrator", "customs_officer", "security_officer"],
+        roles: [
+          "administrator",
+          "customs_officer",
+          "security_officer",
+        ],
       },
       {
         label: "Risk Assessment",
@@ -92,6 +100,7 @@ export const NAV_SECTIONS: NavSection[] = [
       },
     ],
   },
+
   {
     title: "System",
     items: [
@@ -105,12 +114,22 @@ export const NAV_SECTIONS: NavSection[] = [
         label: "Reports",
         path: "/dashboard/reports",
         icon: DocumentChartBarIcon,
-        roles: ["administrator", "port_operator", "customs_officer"],
+        roles: [
+          "administrator",
+          "port_operator",
+          "customs_officer",
+        ],
       },
       {
         label: "Admin Panel",
         path: "/dashboard/admin",
         icon: UsersIcon,
+        roles: ["administrator"],
+      },
+      {
+        label: "System Health",
+        path: "/dashboard/system-health",
+        icon: ServerStackIcon,
         roles: ["administrator"],
       },
       {

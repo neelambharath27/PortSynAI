@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-
+from app.api.v1 import system_health
 from app.api.v1 import (
     auth,
     users,
@@ -36,3 +36,4 @@ api_router.include_router(risk_assessment.router)
 api_router.include_router(prediction.router)
 api_router.include_router(clearance_decision.router)
 api_router.include_router(anomaly_detection.router)
+api_router.include_router(system_health.router)
