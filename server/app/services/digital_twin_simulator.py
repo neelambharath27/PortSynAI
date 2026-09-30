@@ -437,27 +437,23 @@ def _generate_next_reading(
 def _latest_readings_by_container(
     db,
 ) -> dict[str, SensorReading]:
-    """Get the latest sensor reading for every container.
-
-    PostgreSQL DISTINCT ON ensures that only the newest reading
-    for each container is returned instead of loading the entire
-    sensor_readings table into Python.
-    """
+    """Get the latest sensor reading for every container."""
 
     rows = db.scalars(
-        select(SensorReading)
-        .distinct(SensorReading.container_id)
-        .order_by(
+        select(SensorReading).order_by(
             SensorReading.container_id,
             SensorReading.recorded_at.desc(),
-            SensorReading.id.desc(),
         )
-    ).all()
+    )
 
-    return {
-        row.container_id: row
-        for row in rows
-    }
+    latest: dict[str, SensorReading] = {}
+
+    for row in rows:
+
+        if row.container_id not in latest:
+            latest[row.container_id] = row
+
+    return latest
 
 
 # ---------------------------------------------------------------------------
